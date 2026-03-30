@@ -16,14 +16,15 @@
   </style>
 
   <!-- ✅ PDF.js -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
-  <script>
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.worker.min.js";
-  </script>
+  
+<script src="./pdf.min.js"></script>
+<script>
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "./pdf.worker.min.js";
+</script>
+
 
   <!-- ✅ SheetJS (THIS FIXES XLSX EXPORT) -->
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.19.3/dist/xlsx.full.min.js"></script>
+  <script src="./xlsx.full.min.js"></script>
 </head>
 
 <body>
