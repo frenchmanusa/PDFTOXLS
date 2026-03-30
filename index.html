@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Project PDF → Excel (.xlsx)</title>
+
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 20px; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 16px; margin-bottom: 20px; max-width: 1100px; }
+    textarea { width: 100%; min-height: 140px; font-family: monospace; }
+    input[type="file"] { width: 100%; }
+    button { padding: 10px 14px; border-radius: 8px; border: 1px solid #222; background: #111; color: #fff; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    pre { background: #f7f7f7; padding: 12px; border-radius: 8px; font-size: 12px; }
+    .muted { color: #666; }
+  </style>
+
+  <!-- ✅ PDF.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.worker.min.js";
+  </script>
+
+  <!-- ✅ SheetJS (THIS FIXES XLSX EXPORT) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.19.3/dist/xlsx.full.min.js"></script>
+</head>
+
+<body>
+
+<h1>Project PDFs → Excel (.xlsx)</h1>
+<p class="muted">
+  Techniques are extracted <strong>only</strong> from the <code>Techniques:</code> line.
+</p>
+
+<div class="card">
+  <h2>1) Select PDF files</h2>
+  <input id="pdfFiles" type="file" accept="application/pdf" multiple>
+</div>
+
+<div class="card">
+  <h2>2) Controlled technique vocabulary</h2>
+  <textarea id="techVocab">
+Micropiles
+Diaphragm Walls
+Cutoff Walls
+Soil Nails
+Tieback Anchors
+Rock Anchors
+Jet Grouting
+Compaction Grouting
+Permeation Grouting
+Rock Mass Grouting
+Secant Piles
+Soldier Piles and Lagging
+Drilled Shafts
+Underpinning
+Ground Improvement
+  </textarea>
+
+  <h3>Optional synonym normalization</h3>
+  <textarea id="techSynonyms">
+cut-off wall => Cutoff Walls
+cut off wall => Cutoff Walls
+cutoff wall => Cutoff Walls
+tie backs => Tieback Anchors
+tiebacks => Tieback Anchors
+anchors => Tieback Anchors
+  </textarea>
+</div>
+
+<div class="card">
+  <button id="runBtn">Parse PDFs</button>
+  <button id="downloadBtn" disabled>Download Excel (.xlsx)</button>
+  <p id="status" class="muted"></p>
+  <pre id="preview"></pre>
+</div>
+
+<script>
+/* ---------- helpers ---------- */
+
+const norm = s => (s || "").replace(/\s+/g, " ").trim();
+
+const parseSynonyms = t =>
+  t.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+   .map(l => l.split("=>").map(x => x.trim()))
+   .filter(p => p.length === 2);
+
+const applySynonyms = (text, syns) => {
+  let out = text;
+  const lower = text.toLowerCase();
+  syns.forEach(([a,b]) => { if (lower.includes(a.toLowerCase())) out += " " + b; });
+  return out;
+};
+
+const between = (t,a,b) => {
+  const s = t.indexOf(a);
+  if (s === -1) return "";
+  const rest = t.slice(s + a.length);
+  if (!b) return norm(rest);
+  const e = rest.indexOf(b);
+  return e === -1 ? norm(rest) : norm(rest.slice(0,e));
+};
+
+const splitProjects = txt => {
+  const re = /([A-Z][A-Za-z0-9&/.,'() \-]{3,}?)\s*-\s*(\d{5,})/g;
+  let m, hits = [], out = [];
+  while ((m = re.exec(txt)) !== null)
+    hits.push({i:m.index,n:m[1].trim(),k:m[2].trim()});
+  hits.forEach((h,i)=>out.push({
+    name:h.n, num:h.k,
+    raw:txt.slice(h.i, i+1<hits.length?hits[i+1].i:txt.length)
+  }));
+  return out;
+};
+
+const detectTechniques = (text, vocab) =>
+  [...new Set(vocab.filter(v => text.toLowerCase().includes(v.toLowerCase())))];
+
+async function pdfText(file) {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise;
+  let pages = [];
+  for (let i=1;i<=pdf.numPages;i++) {
+    const p = await pdf.getPage(i);
+    const tc = await p.getTextContent();
+    pages.push(tc.items.map(it=>it.str).join(" "));
+  }
+  return norm(pages.join(" "));
+}
+
+/* ---------- main ---------- */
+
+let rows = [];
+
+document.getElementById("runBtn").onclick = async () => {
+  rows = [];
+  document.getElementById("downloadBtn").disabled = true;
+  document.getElementById("status").textContent = "Parsing PDFs…";
+
+  const files = [...document.getElementById("pdfFiles").files];
+  if (!files.length) return;
+
+  const vocab = document.getElementById("techVocab").value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean);
+  const syns = parseSynonyms(document.getElementById("techSynonyms").value);
+
+  for (const f of files) {
+    const text = await pdfText(f);
+    splitProjects(text).forEach(p => {
+      const techLine = applySynonyms(between(p.raw,"Techniques:",null), syns);
+      const found = detectTechniques(techLine, vocab);
+
+      rows.push({
+        "Source File": f.name,
+        "Project Name": p.name,
+        "Project Number": p.num,
+        "Description": norm(p.raw.replace(p.name+" - "+p.num,"")),
+        "City": between(p.raw,"City:","State:"),
+        "State": between(p.raw,"State:","Owner:"),
+        "Owner": between(p.raw,"Owner:","General Contractor:"),
+        "General Contractor": between(p.raw,"General Contractor:","Contract Amount:"),
+        "Contract Amount": between(p.raw,"Contract Amount:","Project Start:"),
+        "Project Start": between(p.raw,"Project Start:","Project Finish:"),
+        "Project Finish": between(p.raw,"Project Finish:","Industry:"),
+        "Industry": between(p.raw,"Industry:","Design/Build:"),
+        "Design-Build": between(p.raw,"Design/Build:","Techniques:"),
+        "Technique 1": found[0] || "",
+        "Technique 2": found[1] || "",
+        "Technique 3": found[2] || ""
+      });
+    });
+  }
+
+  document.getElementById("preview").textContent =
+    JSON.stringify(rows.slice(0,5), null, 2);
+
+  document.getElementById("status").textContent =
+    `Parsed ${rows.length} rows.`;
+
+  document.getElementById("downloadBtn").disabled = rows.length === 0;
+};
+
+document.getElementById("downloadBtn").onclick = () => {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(rows);
+  XLSX.utils.book_append_sheet(wb, ws, "Projects");
+
+  // ✅ Browser will open Save dialog OR auto‑save to Downloads
+  XLSX.writeFile(wb, "projects.xlsx");
+};
+</script>
+
+</body>
+</html>
